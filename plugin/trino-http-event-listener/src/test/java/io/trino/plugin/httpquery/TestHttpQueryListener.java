@@ -33,6 +33,7 @@ import io.trino.spi.session.ResourceEstimates;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import okhttp3.mockwebserver.SocketPolicy;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -226,7 +227,7 @@ public class TestHttpQueryListener
         querylogListener.queryCompleted(null);
         querylogListener.splitCompleted(null);
 
-        assertNull(server.takeRequest(1, TimeUnit.SECONDS));
+        assertNull(server.takeRequest(5, TimeUnit.SECONDS));
     }
 
     @Test
@@ -245,13 +246,13 @@ public class TestHttpQueryListener
         server.enqueue(new MockResponse().setResponseCode(200));
 
         querylogListener.queryCreated(queryCreatedEvent);
-        checkRequest(server.takeRequest(1, TimeUnit.SECONDS), queryCreatedEvent);
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), queryCreatedEvent);
 
         querylogListener.queryCompleted(queryCompleteEvent);
-        checkRequest(server.takeRequest(1, TimeUnit.SECONDS), queryCompleteEvent);
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), queryCompleteEvent);
 
         querylogListener.splitCompleted(splitCompleteEvent);
-        checkRequest(server.takeRequest(1, TimeUnit.SECONDS), splitCompleteEvent);
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), splitCompleteEvent);
     }
 
     @Test
@@ -267,7 +268,7 @@ public class TestHttpQueryListener
 
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        assertEquals(server.takeRequest(1, TimeUnit.SECONDS).getHeader("Content-Type"), "application/json; charset=utf-8");
+        assertEquals(server.takeRequest(5, TimeUnit.SECONDS).getHeader("Content-Type"), "application/json; charset=utf-8");
     }
 
     public void testHttpHeadersShouldBePresent()
@@ -283,7 +284,7 @@ public class TestHttpQueryListener
 
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        checkRequest(server.takeRequest(1, TimeUnit.SECONDS), new HashMap<>() {{
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), new HashMap<>() {{
                 put("Authorization", "Trust Me!");
                 put("Cache-Control", "no-cache");
             }}, queryCompleteEvent);
@@ -304,7 +305,7 @@ public class TestHttpQueryListener
             }});
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        RecordedRequest recordedRequest = server.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest recordedRequest = server.takeRequest(5, TimeUnit.SECONDS);
 
         assertNotNull(recordedRequest, "Handshake probably failed");
         assertEquals(recordedRequest.getTlsVersion().javaName(), "TLSv1.3");
@@ -327,7 +328,7 @@ public class TestHttpQueryListener
             }});
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        RecordedRequest recordedRequest = server.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest recordedRequest = server.takeRequest(5, TimeUnit.SECONDS);
 
         assertNull(recordedRequest, "Handshake should have failed");
     }
@@ -346,7 +347,7 @@ public class TestHttpQueryListener
             }});
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        RecordedRequest recordedRequest = server.takeRequest(1, TimeUnit.SECONDS);
+        RecordedRequest recordedRequest = server.takeRequest(5, TimeUnit.SECONDS);
 
         assertNull(recordedRequest, "Handshake should have failed");
     }
@@ -366,12 +367,12 @@ public class TestHttpQueryListener
 
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        assertNotNull(server.takeRequest(1, TimeUnit.SECONDS)); // First request that responds with 500
-        checkRequest(server.takeRequest(1, TimeUnit.SECONDS), queryCompleteEvent); // The retry that responds with 200
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)); // First request that responds with 500
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), queryCompleteEvent); // The retry that responds with 200
     }
 
     @Test
-    public void testServer400ShouldNotRetry()
+    public void testServer400ShouldRetry()
             throws Exception
     {
         EventListener querylogListener = factory.create(new HashMap<>(){{
@@ -385,8 +386,27 @@ public class TestHttpQueryListener
 
         querylogListener.queryCompleted(queryCompleteEvent);
 
-        assertNotNull(server.takeRequest(1, TimeUnit.SECONDS)); // First request, send back 400
-        assertNull(server.takeRequest(1, TimeUnit.SECONDS)); // No more retries
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)); // First request, send back 400
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), queryCompleteEvent); // The retry that responds with 200
+    }
+
+    @Test
+    public void testServerDisconnectShouldRetry()
+            throws Exception
+    {
+        EventListener querylogListener = factory.create(new HashMap<>(){{
+                put("http-event-listener.connect-ingest-uri", server.url("/").toString());
+                put("http-event-listener.log-completed", "true");
+                put("http-event-listener.connect-retry-count", "1");
+            }});
+
+        server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START));
+        server.enqueue(new MockResponse().setResponseCode(200));
+
+        querylogListener.queryCompleted(queryCompleteEvent);
+
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)); // First request, causes exception
+        checkRequest(server.takeRequest(5, TimeUnit.SECONDS), queryCompleteEvent);
     }
 
     @Test
