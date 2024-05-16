@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.opa;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Multimaps;
@@ -34,6 +35,7 @@ import io.trino.plugin.opa.schema.TrinoUser;
 import io.trino.spi.connector.CatalogSchemaName;
 import io.trino.spi.connector.CatalogSchemaRoutineName;
 import io.trino.spi.connector.CatalogSchemaTableName;
+import io.trino.spi.connector.ColumnSchema;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.function.SchemaFunctionName;
 import io.trino.spi.security.AccessDeniedException;
@@ -737,11 +739,12 @@ public sealed class OpaAccessControl
     }
 
     @Override
-    public Optional<ViewExpression> getColumnMask(SystemSecurityContext context, CatalogSchemaTableName tableName, String columnName, Type type)
+    public Map<ColumnSchema, ViewExpression> getTableColumnMasks(SystemSecurityContext context, CatalogSchemaTableName tableName, List<ColumnSchema> columns)
     {
-        return opaHighLevelClient
-                .getColumnMaskFromOpa(buildQueryContext(context), tableName, columnName, type)
-                .map(expression -> expression.toTrinoViewExpression(tableName.getCatalogName(), tableName.getSchemaTableName().getSchemaName()));
+        return opaHighLevelClient.getTableColumnMasksFromOpa(buildQueryContext(context), tableName, columns)
+                .entrySet().stream()
+                .map(entry -> Map.entry(entry.getKey(), entry.getValue().toTrinoViewExpression(tableName.getCatalogName(), tableName.getSchemaTableName().getSchemaName())))
+                .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     @Override
